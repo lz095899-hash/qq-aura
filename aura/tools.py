@@ -64,10 +64,10 @@ _QZONE = _tool(
 
 _AVATAR = _tool(
     "change_avatar",
-    "更换自己的 QQ 头像。只有你真的想换、或主人明确让你换时使用；不要频繁更换。"
-    "source 填头像目录里的文件名，或可信的 HTTPS 图片 URL。",
-    {"source": {"type": "string", "description": "本地头像文件名或 HTTPS 图片 URL"}},
-    ["source"])
+    "更换自己的 QQ 头像。当男朋友（主人）让你换头像、或者你想换个好看的新头像时调用。"
+    "source 可选填本地图库文件名（如 xiaoyu-thoughtful.png），或留空/填 default 自动挑选图库美照，或填 HTTPS 图片 URL。",
+    {"source": {"type": "string", "description": "本地头像文件名或 HTTPS 图片 URL，可留空自动挑选"}},
+    [])
 
 _DIARY = _tool(
     "write_diary",

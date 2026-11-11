@@ -328,14 +328,29 @@ class Engine:
         self.store.add_qzone(tid, text)
         return {"ok": True, "message": f"说说发出去了（tid {tid or '?'}）", "tid": tid}
 
-    async def change_avatar(self, source, force=False, ctx=None):
+    async def change_avatar(self, source="", force=False, ctx=None):
         """更换 QQ 头像。source 可为 HTTPS URL，或 avatar_dir 内的文件名。"""
         cfg = self.cfg()["behavior"].get("avatar") or {}
         if not cfg.get("enabled"):
             return {"ok": False, "message": "换头像功能没开（behavior.avatar.enabled）"}
         source = str(source or "").strip()
-        if not source:
-            return {"ok": False, "message": "缺少头像图片"}
+
+        # 如果是主人触发，允许直接更换跳过冷却
+        if ctx and ctx.get("is_owner"):
+            force = True
+
+        avatar_dir = Path(str(cfg.get("dir") or "~/.aura/avatars")).expanduser().resolve()
+        choices = sorted(p.name for p in avatar_dir.glob("*") if p.suffix.lower() in
+                         {".jpg", ".jpeg", ".png", ".webp"}) if avatar_dir.exists() else []
+
+        # 留空或泛指时，自动从图库选择
+        if not source or source.lower() in ("default", "auto", "none", "null") or "头像" in source:
+            if "xiaoyu-thoughtful.png" in choices:
+                source = "xiaoyu-thoughtful.png"
+            elif choices:
+                source = choices[0]
+            else:
+                return {"ok": False, "message": "缺少头像图片，图库中无可用文件"}
 
         cooldown_h = max(0.0, float(cfg.get("cooldown_hours", 168)))
         last = float(self.store.get("avatar_last_changed", 0) or 0)
@@ -349,7 +364,6 @@ class Engine:
         elif source.startswith("http://"):
             return {"ok": False, "message": "远程头像只允许 HTTPS URL"}
         else:
-            avatar_dir = Path(str(cfg.get("dir") or "~/.aura/avatars")).expanduser().resolve()
             candidate = Path(source).expanduser()
             path = candidate.resolve() if candidate.is_absolute() else (avatar_dir / candidate).resolve()
             try:
@@ -357,9 +371,13 @@ class Engine:
             except ValueError:
                 return {"ok": False, "message": "本地头像必须位于配置的 avatar.dir 目录内"}
             if not path.is_file():
-                choices = sorted(p.name for p in avatar_dir.glob("*") if p.suffix.lower() in
-                                 {".jpg", ".jpeg", ".png", ".webp"}) if avatar_dir.exists() else []
-                return {"ok": False, "message": "头像文件不存在", "available": choices[:30]}
+                matched = [c for c in choices if Path(source).stem.lower() in c.lower()]
+                if matched:
+                    path = avatar_dir / matched[0]
+                elif "xiaoyu-thoughtful.png" in choices:
+                    path = avatar_dir / "xiaoyu-thoughtful.png"
+                else:
+                    return {"ok": False, "message": "头像文件不存在", "available": choices[:30]}
             if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
                 return {"ok": False, "message": "头像只支持 jpg/jpeg/png/webp"}
             if path.stat().st_size > int(cfg.get("max_bytes", 5 * 1024 * 1024)):
