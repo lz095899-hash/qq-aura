@@ -81,6 +81,58 @@ behavior:
     cooldown_hours: 168      # 自主更换冷却，默认 7 天
     max_bytes: 5242880       # 单张最多 5 MiB
 
+  content:                    # 刷抖音/B站与自动解析分享链接
+    enabled: false
+    platforms: [douyin, bilibili]
+    auto_share: false         # 每天按时间主动分享一条
+    share_times: ["12:30", "20:30"]
+    max_per_day: 1
+
+  voice:                      # 小米 MiMo TTS → QQ 原生语音条
+    enabled: false
+    base_url: https://api.xiaomimimo.com/v1
+    model: mimo-v2.5-tts
+    voice: 茉莉
+    api_key_env: XIAOMI_API_KEY
+    cache_dir: ~/.aura/cache/tts
+    auto_probability: 0.0
+
+  stickers:
+    enabled: false
+    dir: ~/.aura/stickers
+    auto_probability: 0.12
+
+  selfie:
+    enabled: false
+    dir: ~/.aura/selfies
+    live_generation: false    # true = 用固定参考脸即时重绘，失败自动回退本地图库
+    live_dir: ~/.aura/selfies/live
+    reference: ~/.aura/selfies/日常/morning-window.png
+    provider: magpie
+    model: codex/gpt-image-2
+
+  vision:
+    enabled: false             # 收到图片后先视觉理解，再按图片内容回复
+    provider: magpie
+    model: group/never-stuck
+
+  weather:
+    enabled: false
+    home_city: ""             # 配置后每天定时关心天气；也可临时问任意城市
+    brief_times: ["07:45"]
+    max_per_day: 1
+
+  reminders:
+    enabled: true
+  couple:
+    enabled: true
+    anniversary: ""           # YYYY-MM-DD
+    affection_start: 60
+    group_protect: true
+  music:
+    enabled: true
+    provider: netease
+
   memory:
     enabled: true
     consolidate_at: "03:30"  # 每天整理一次昨天的聊天

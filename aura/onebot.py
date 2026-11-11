@@ -58,6 +58,19 @@ def text_of(message):
     return "".join(out).strip()
 
 
+def media_of(message):
+    """提取消息里的图片/语音/视频 URL，供多模态和链接解析使用。"""
+    out = []
+    for seg in message or []:
+        kind = seg.get("type")
+        data = seg.get("data") or {}
+        if kind in ("image", "record", "video"):
+            url = data.get("url") or data.get("file") or ""
+            if str(url).startswith(("http://", "https://")):
+                out.append({"type": kind, "url": str(url)})
+    return out
+
+
 def mentions_me(message, self_id):
     for seg in message or []:
         if seg.get("type") == "at" and str(seg.get("data", {}).get("qq", "")) == str(self_id):
@@ -159,9 +172,12 @@ class OneBot:
         if chat["kind"] == "group" and at:
             segs.append(seg_at(at))
         segs.extend(seg_text(text))
+        return await self.send_segments(chat, segs)
+
+    async def send_segments(self, chat, segments, timeout=60.0):
         if chat["kind"] == "group":
-            return await self.send_group(chat["id"], segs)
-        return await self.send_private(chat["id"], segs)
+            return await self.send_group(chat["id"], segments, timeout=timeout)
+        return await self.send_private(chat["id"], segments, timeout=timeout)
 
     # ---------------- 探测 ----------------
     async def probe(self):

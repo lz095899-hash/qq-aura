@@ -11,6 +11,7 @@ import socket
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -97,6 +98,13 @@ async def main():
                       "social": {"enabled": False}},
             "avatar": {"enabled": True, "dir": str(tmp / "avatars"), "cooldown_hours": 168,
                        "max_bytes": 5242880},
+            "content": {"enabled": True, "auto_share": False},
+            "voice": {"enabled": True},
+            "stickers": {"enabled": True, "dir": str(tmp / "stickers")},
+            "selfie": {"enabled": True, "dir": str(tmp / "selfies"), "live_generation": False},
+            "vision": {"enabled": False}, "weather": {"enabled": True, "home_city": ""},
+            "reminders": {"enabled": True}, "couple": {"enabled": True},
+            "music": {"enabled": True},
         },
         "control": {"host": "127.0.0.1", "port": free_port(), "token": ""},
         "persona": {"name": "小鱼", "age": 19, "gender": "女",
@@ -109,6 +117,10 @@ async def main():
     avatar_dir = tmp / "avatars"
     avatar_dir.mkdir()
     (avatar_dir / "happy.png").write_bytes(b"fake-png-for-onebot-test")
+    for dirname, filename in (("stickers", "撒娇.png"), ("selfies", "日常.png")):
+        d = tmp / dirname
+        d.mkdir()
+        (d / filename).write_bytes(b"fake-image-for-onebot-test")
 
     print("连接假网关…")
     engine = build(cfg)
@@ -175,7 +187,40 @@ async def main():
     r2 = await engine.change_avatar("happy.png")
     check("冷却期阻止频繁换头像", not r2.get("ok") and "冷却" in r2.get("message", ""), r2)
 
-    # 8. 空间日记
+    # 8. 多模态与生活扩展
+    print("\n[8] 表情包 / 自拍 / 语音 / 提醒 / 情侣互动")
+    owner_ctx = {"chat_id": "private:10000", "kind": "private", "raw_id": "10000",
+                 "speaker_id": "10000", "speaker_name": "主人", "is_owner": True}
+    before_media = len(gw.calls)
+    sr = await engine.send_sticker("撒娇", owner_ctx)
+    check("本地表情包能发图", sr.get("ok") and any(
+        c["action"] == "send_private_msg" and any(s.get("type") == "image" for s in c["params"]["message"])
+        for c in gw.calls[before_media:]), sr)
+    before_media = len(gw.calls)
+    sf = await engine.send_selfie("日常", owner_ctx)
+    check("本地自拍能发图", sf.get("ok") and any(
+        c["action"] == "send_private_msg" and any(s.get("type") == "image" for s in c["params"]["message"])
+        for c in gw.calls[before_media:]), sf)
+
+    async def fake_tts(text, style="", voice=""):
+        return {"ok": True, "base64": "base64://ZmFrZS1tcDM=", "bytes": 8}
+    engine.extras.tts = fake_tts
+    before_media = len(gw.calls)
+    vr = await engine.speak("晚安呀", ctx=owner_ctx)
+    check("TTS 能发 QQ 语音段", vr.get("ok") and any(
+        c["action"] == "send_private_msg" and any(s.get("type") == "record" for s in c["params"]["message"])
+        for c in gw.calls[before_media:]), vr)
+
+    due = (datetime.fromtimestamp(time.time() + 3600)).strftime("%Y-%m-%d %H:%M")
+    rr = engine.set_reminder("喝水", due, ctx=owner_ctx)
+    check("能设置定时提醒", rr.get("ok") and engine.store.list_reminders("private:10000"), rr)
+    check("情侣问答有内容", bool(engine.couple_game("默契问答").get("prompt")))
+    check("塔罗抽牌有结果", bool(engine.draw_tarot("今天顺利吗").get("card")))
+    check("能保存恋爱纪念日", engine.set_anniversary("2026-01-01").get("ok"))
+    check("能计算相处天数与好感度", bool(engine.couple_status().get("days_together")) and
+          engine.couple_status().get("affection") >= 0)
+
+    # 9. 空间日记
     print("\n[8] 空间日记")
     r = await engine.write_diary()
     check("日记发出去了", r.get("ok"), r)

@@ -11,10 +11,12 @@ import json
 import logging
 import random
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import tools as tools_mod
-from .onebot import OneBotError, mentions_me, text_of
+from .extras import Extras
+from .onebot import OneBotError, media_of, mentions_me, text_of
 from .persona import diary_prompt, now_text, system_prompt
 
 log = logging.getLogger("aura.engine")
@@ -30,6 +32,7 @@ class Engine:
         self.memory = memory
         self.llm = llm
         self.onebot = onebot
+        self.extras = Extras(cfg_getter)
         self._bufs = {}
         self._suppress = False
         self._last_proactive = 0.0
@@ -65,14 +68,47 @@ class Engine:
         uid = str(evt.get("user_id") or "")
         if not uid or uid == str(self.onebot.self_id):
             return
-        text = text_of(evt.get("message"))
+        message = evt.get("message")
+        text = text_of(message)
+        medias = media_of(message)
+        if not text and medias:
+            text = " ".join({"image": "[发来一张图片]", "record": "[发来一条语音]",
+                             "video": "[发来一个视频]"}.get(m["type"], "[发来媒体]") for m in medias)
         if not text:
             return
+
+        # 图片理解：把真实视觉描述注入本轮上下文，失败不影响聊天
+        images = [m["url"] for m in medias if m["type"] == "image"]
+        if images and (self.cfg()["behavior"].get("vision") or {}).get("enabled"):
+            try:
+                seen = await self.extras.describe_image(images[0])
+                if seen.get("ok"):
+                    text += f"\n（你看到的图片内容：{seen.get('description')}）"
+            except Exception as e:
+                log.info("看图失败，按普通图片继续：%s", e)
+
+        # 抖音/B站等链接自动解析，让模型能真的讨论链接内容
+        if "http" in text and (self.cfg()["behavior"].get("content") or {}).get("enabled"):
+            try:
+                metas = await self.extras.enrich_links(text)
+                useful = [m for m in metas if not m.get("error")]
+                if useful:
+                    text += "\n（链接解析：" + json.dumps(useful, ensure_ascii=False)[:1600] + "）"
+            except Exception as e:
+                log.info("链接解析失败，保留原链接：%s", e)
         sender = evt.get("sender") or {}
         name = sender.get("card") or sender.get("nickname") or uid
         key = self.chat_key(evt)
         self.store.add_message(key, "user", text, uid, name)
         self.stats["recv"] += 1
+        if uid == self.owner_qq and (self.cfg()["behavior"].get("couple") or {}).get("enabled"):
+            start = float((self.cfg()["behavior"].get("couple") or {}).get("affection_start", 60))
+            score = float(self.store.get("couple_affection", start) or start)
+            self.store.set("couple_affection", min(100.0, score + 0.05))
+            today = time.strftime("%Y-%m-%d")
+            if self.store.get("couple_last_active_day", "") != today:
+                self.store.set("couple_last_active_day", today)
+                self.store.set("couple_affection", min(100.0, score + 0.5))
 
         if not self._enabled():
             return
@@ -397,6 +433,194 @@ class Engine:
         self.store.set("avatar_current", shown)
         return {"ok": True, "message": f"头像已更换：{shown}", "source": shown}
 
+    # ---------------- 多模态 / 生活 / 情侣扩展 ----------------
+    def _chat_from_ctx(self, ctx):
+        return {"key": ctx["chat_id"], "chat_id": ctx["chat_id"], "kind": ctx["kind"],
+                "id": ctx["raw_id"], "raw_id": ctx["raw_id"],
+                "speaker_id": ctx.get("speaker_id", ""), "speaker_name": ctx.get("speaker_name", "")}
+
+    async def speak(self, text, style="", ctx=None):
+        if not ctx or not ctx.get("is_owner"):
+            return {"ok": False, "message": "语音只给主人发送"}
+        out = await self.extras.tts(text, style=style)
+        if not out.get("ok"):
+            return out
+        if self._dry():
+            return {"ok": True, "message": "试运行，语音已生成但未发送", "path": out.get("path")}
+        try:
+            await self.onebot.send_segments(self._chat_from_ctx(ctx),
+                                            [{"type": "record", "data": {"file": out["base64"]}}], timeout=90)
+            self.stats["sent"] += 1
+            return {"ok": True, "message": "语音发出去了", "bytes": out.get("bytes")}
+        except OneBotError as e:
+            return {"ok": False, "message": str(e)}
+
+    async def send_sticker(self, mood="撒娇", ctx=None):
+        cfg = self.cfg()["behavior"].get("stickers") or {}
+        if not cfg.get("enabled"):
+            return {"ok": False, "message": "表情包功能没开"}
+        path = self.extras.pick_asset("stickers", mood)
+        if not path:
+            return {"ok": False, "message": "本地表情库里没有合适的图"}
+        if self._dry():
+            return {"ok": True, "message": f"试运行，没真发表情：{path.name}"}
+        payload = "base64://" + base64.b64encode(path.read_bytes()).decode("ascii")
+        try:
+            await self.onebot.send_segments(self._chat_from_ctx(ctx),
+                                            [{"type": "image", "data": {"file": payload, "summary": "[表情包]"}}])
+            self.stats["sent"] += 1
+            return {"ok": True, "message": f"表情包发出去了：{path.name}"}
+        except OneBotError as e:
+            return {"ok": False, "message": str(e)}
+
+    async def send_selfie(self, scene="日常", ctx=None):
+        if not ctx or not ctx.get("is_owner"):
+            return {"ok": False, "message": "自拍只发给男朋友"}
+        cfg = self.cfg()["behavior"].get("selfie") or {}
+        if not cfg.get("enabled"):
+            return {"ok": False, "message": "自拍功能没开"}
+        path = None
+        generated = False
+        if cfg.get("live_generation"):
+            try:
+                live = await self.extras.generate_selfie(scene)
+                if live.get("ok"):
+                    path = Path(live["path"])
+                    generated = True
+                else:
+                    log.info("即时自拍降级到本地图库：%s", live.get("message"))
+            except Exception as e:
+                log.info("即时自拍异常，降级到本地图库：%s", e)
+        path = path or self.extras.pick_asset("selfie", scene) or self.extras.pick_asset("selfie")
+        if not path:
+            return {"ok": False, "message": "自拍图库还没有照片"}
+        if self._dry():
+            return {"ok": True, "message": f"试运行，没真发自拍：{path.name}"}
+        payload = "base64://" + base64.b64encode(path.read_bytes()).decode("ascii")
+        try:
+            await self.onebot.send_segments(self._chat_from_ctx(ctx),
+                                            [{"type": "image", "data": {"file": payload, "summary": "[自拍]"}}])
+            self.stats["sent"] += 1
+            return {"ok": True, "message": f"自拍发出去了：{path.name}", "scene": scene,
+                    "generated": generated}
+        except OneBotError as e:
+            return {"ok": False, "message": str(e)}
+
+    async def browse_content(self, platform="all", topic="", share=False, ctx=None):
+        cfg = self.cfg()["behavior"].get("content") or {}
+        if not cfg.get("enabled"):
+            return {"ok": False, "message": "刷视频功能没开"}
+        try:
+            items = await self.extras.trending(platform, 8)
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+        if topic:
+            hit = [x for x in items if topic.lower() in json.dumps(x, ensure_ascii=False).lower()]
+            if hit:
+                items = hit
+        if share and ctx and items:
+            item = random.choice(items[:5])
+            text = f"{item.get('title') or '刚刷到这个'}\n{item.get('url', '')}".strip()
+            try:
+                await self.onebot.send_text(self._chat_from_ctx(ctx), text)
+                self.stats["sent"] += 1
+            except OneBotError as e:
+                return {"ok": False, "message": str(e)}
+            return {"ok": True, "message": "分享给他了", "item": item}
+        return {"ok": True, "items": items}
+
+    async def weather(self, city=""):
+        try:
+            return await self.extras.weather(city)
+        except Exception as e:
+            return {"ok": False, "message": f"天气查询失败：{e}"}
+
+    async def share_music(self, query="", ctx=None):
+        if not (self.cfg()["behavior"].get("music") or {}).get("enabled"):
+            return {"ok": False, "message": "音乐功能没开"}
+        try:
+            songs = await self.extras.search_music(query, 5)
+        except Exception as e:
+            return {"ok": False, "message": f"搜歌失败：{e}"}
+        if not songs:
+            return {"ok": False, "message": "没搜到歌"}
+        song = songs[0]
+        if ctx:
+            try:
+                await self.onebot.send_segments(self._chat_from_ctx(ctx),
+                    [{"type": "music", "data": {"type": "163", "id": str(song["id"])}}])
+                self.stats["sent"] += 1
+            except OneBotError:
+                await self.onebot.send_text(self._chat_from_ctx(ctx),
+                                            f"{song['name']} - {song['artist']}\n{song['url']}")
+        return {"ok": True, "message": "歌发过去了", "song": song}
+
+    def set_reminder(self, text, due_at, repeat="", ctx=None):
+        if not (self.cfg()["behavior"].get("reminders") or {}).get("enabled"):
+            return {"ok": False, "message": "提醒功能没开"}
+        raw = str(due_at or "").strip()
+        try:
+            if raw.isdigit():
+                ts = float(raw)
+            else:
+                raw = raw.replace("T", " ")
+                fmt = "%Y-%m-%d %H:%M:%S" if len(raw) > 16 else "%Y-%m-%d %H:%M"
+                ts = datetime.strptime(raw, fmt).timestamp()
+        except Exception:
+            return {"ok": False, "message": "时间格式请用 YYYY-MM-DD HH:MM"}
+        if ts <= time.time():
+            return {"ok": False, "message": "提醒时间已经过去了"}
+        rid = self.store.add_reminder(ctx["chat_id"], str(text).strip(), ts, str(repeat or ""))
+        return {"ok": True, "message": f"提醒设好了：{datetime.fromtimestamp(ts):%m月%d日 %H:%M}", "id": rid}
+
+    def list_reminders(self, ctx):
+        rows = self.store.list_reminders(ctx["chat_id"])
+        return {"ok": True, "items": [{"id": r["id"], "text": r["text"],
+                                         "due_at": datetime.fromtimestamp(r["due_at"]).strftime("%Y-%m-%d %H:%M"),
+                                         "repeat": r["repeat_rule"]} for r in rows]}
+
+    def couple_game(self, game="默契问答"):
+        games = {
+            "默契问答": ["如果我们突然多出一天假期，你猜我最想和你去哪里？",
+                         "你觉得我什么时候最黏你？", "我们第一次聊天里，你印象最深的是哪句话？"],
+            "海龟汤": ["一个女生每天等同一个人的消息，有天对方秒回，她却哭了。为什么？",
+                       "两个人明明没见面，却同时说了晚安。第二天其中一个很生气。为什么？"],
+            "真心话": ["你最想我改掉哪个小毛病？", "哪一次你突然觉得特别喜欢我？",
+                       "如果只能保留我们的一段回忆，你会选哪段？"],
+        }
+        key = next((k for k in games if k in str(game)), "默契问答")
+        return {"ok": True, "game": key, "prompt": random.choice(games[key])}
+
+    def draw_tarot(self, question=""):
+        cards = [("太阳", "坦率、快乐和被看见"), ("恋人", "选择、亲密与真心交流"),
+                 ("星星", "希望正在慢慢变清晰"), ("月亮", "别让猜测代替沟通"),
+                 ("力量", "温柔比硬碰硬更有力量"), ("世界", "一个阶段正在圆满")]
+        name, meaning = random.choice(cards)
+        upright = random.choice([True, True, False])
+        return {"ok": True, "question": question, "card": name,
+                "orientation": "正位" if upright else "逆位", "meaning": meaning}
+
+    def set_anniversary(self, date_text):
+        try:
+            day = datetime.strptime(str(date_text).strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return {"ok": False, "message": "纪念日格式请用 YYYY-MM-DD"}
+        self.store.set("couple_anniversary", day.isoformat())
+        return {"ok": True, "message": f"把 {day:%Y年%m月%d日} 设为我们的纪念日了"}
+
+    def couple_status(self):
+        cfg = self.cfg()["behavior"].get("couple") or {}
+        start = float(cfg.get("affection_start", 60))
+        score = round(float(self.store.get("couple_affection", start) or start), 1)
+        anniversary = str(self.store.get("couple_anniversary", "") or cfg.get("anniversary") or "")
+        days = None
+        if anniversary:
+            try:
+                days = max(0, (datetime.now().date() - datetime.strptime(anniversary, "%Y-%m-%d").date()).days + 1)
+            except ValueError:
+                pass
+        return {"ok": True, "affection": score, "anniversary": anniversary, "days_together": days}
+
     async def write_diary(self, ctx=None):
         key = f"private:{self.owner_qq}"
         start = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
@@ -447,6 +671,73 @@ class Engine:
         if p.get("enabled") and time.time() - self._last_proactive >= float(p.get("tick_seconds", 300)):
             self._last_proactive = time.time()
             await self.proactive()
+
+        # 到点提醒
+        for r in self.store.due_reminders(time.time()):
+            kind, _, rid = str(r["chat_id"]).partition(":")
+            chat = {"key": r["chat_id"], "chat_id": r["chat_id"], "kind": kind,
+                    "id": rid, "raw_id": rid, "speaker_id": rid, "speaker_name": ""}
+            try:
+                await self.onebot.send_text(chat, f"提醒你一下呀：{r['text']}")
+                self.stats["sent"] += 1
+                repeat = str(r["repeat_rule"] or "").lower()
+                step = 86400 if repeat in ("daily", "每天") else 604800 if repeat in ("weekly", "每周") else 0
+                self.store.fire_reminder(r["id"], float(r["due_at"]) + step if step else 0)
+            except Exception as e:
+                log.info("提醒发送失败，稍后重试：%s", e)
+
+        # 主动刷视频并分享（每日限额）
+        content_cfg = b.get("content") or {}
+        if content_cfg.get("enabled") and content_cfg.get("auto_share") and self._enabled() \
+                and self.store.count_today("content_share") < int(content_cfg.get("max_per_day", 1)):
+            for t in content_cfg.get("share_times") or []:
+                if self._near(t, 12):
+                    ctx = {"chat_id": f"private:{self.owner_qq}", "kind": "private",
+                           "raw_id": self.owner_qq, "speaker_id": self.owner_qq,
+                           "speaker_name": self.cfg()["identity"].get("owner_name", "主人"), "is_owner": True}
+                    out = await self.browse_content(random.choice(content_cfg.get("platforms") or ["all"]),
+                                                    share=True, ctx=ctx)
+                    if out.get("ok"):
+                        self.store.bump("content_share")
+                    break
+
+        # 每日天气关怀
+        weather_cfg = b.get("weather") or {}
+        if weather_cfg.get("enabled") and weather_cfg.get("home_city") and self._enabled() \
+                and self.store.count_today("weather_brief") < int(weather_cfg.get("max_per_day", 1)):
+            for t in weather_cfg.get("brief_times") or []:
+                if self._near(t, 12):
+                    w = await self.weather(weather_cfg.get("home_city"))
+                    if w.get("ok"):
+                        chat = {"key": f"private:{self.owner_qq}", "chat_id": f"private:{self.owner_qq}",
+                                "kind": "private", "id": self.owner_qq, "raw_id": self.owner_qq,
+                                "speaker_id": self.owner_qq, "speaker_name": "主人"}
+                        rain = w.get("rain_probability") or 0
+                        tip = "记得带伞呀" if rain >= 40 else "出门照顾好自己"
+                        await self.onebot.send_text(chat, f"早呀，{w['city']}今天{w['weather']}，"
+                                                   f"{w['today_low']}～{w['today_high']}℃，{tip}。")
+                        self.store.bump("weather_brief")
+                    break
+
+        # 恋爱纪念日：私聊提醒并发一条空间动态
+        couple_cfg = b.get("couple") or {}
+        anniversary = str(self.store.get("couple_anniversary", "") or couple_cfg.get("anniversary") or "")
+        if couple_cfg.get("enabled") and anniversary and self.store.count_today("anniversary") == 0:
+            try:
+                start_day = datetime.strptime(anniversary, "%Y-%m-%d").date()
+                today = datetime.now().date()
+                if (today.month, today.day) == (start_day.month, start_day.day) and self._near("09:10", 20):
+                    days = (today - start_day).days + 1
+                    chat = {"key": f"private:{self.owner_qq}", "chat_id": f"private:{self.owner_qq}",
+                            "kind": "private", "id": self.owner_qq, "raw_id": self.owner_qq,
+                            "speaker_id": self.owner_qq, "speaker_name": "主人"}
+                    await self.onebot.send_text(chat, f"今天是我们的纪念日呀，已经是喜欢你的第 {days} 天了。")
+                    qz = b.get("qzone") or {}
+                    if qz.get("enabled"):
+                        await self.post_qzone(f"喜欢一个人不是一瞬间的事。今天是我们在一起的第 {days} 天。")
+                    self.store.bump("anniversary")
+            except ValueError:
+                log.warning("纪念日格式不对：%s", anniversary)
 
         # 空间日记
         qz = b.get("qzone") or {}
@@ -529,6 +820,7 @@ class Engine:
         self._bufs.clear()
         await self.onebot.stop()
         await self.llm.close()
+        await self.extras.close()
 
     # ---------------- 对外 ----------------
     async def send_manual(self, chat_id, text, at=None):

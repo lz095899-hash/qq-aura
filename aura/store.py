@@ -50,6 +50,18 @@ CREATE TABLE IF NOT EXISTS daily_count (
 CREATE TABLE IF NOT EXISTS consolidated (
   day TEXT PRIMARY KEY, done_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reminders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL, text TEXT NOT NULL, due_at REAL NOT NULL,
+  repeat_rule TEXT DEFAULT '', enabled INTEGER DEFAULT 1,
+  created_at REAL NOT NULL, fired_at REAL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(enabled, due_at);
+CREATE TABLE IF NOT EXISTS couple_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, event_date TEXT NOT NULL,
+  repeat_yearly INTEGER DEFAULT 1, note TEXT DEFAULT ''
+);
 """
 
 
@@ -235,6 +247,48 @@ class Store:
             self.db.execute("INSERT OR REPLACE INTO consolidated(day,done_at) VALUES(?,?)",
                             (day, time.time()))
             self.db.commit()
+
+    # ---------- 提醒 / 纪念日 ----------
+    def add_reminder(self, chat_id, text, due_at, repeat_rule=""):
+        with self._lock:
+            cur = self.db.execute(
+                "INSERT INTO reminders(chat_id,text,due_at,repeat_rule,created_at) VALUES(?,?,?,?,?)",
+                (chat_id, text, float(due_at), repeat_rule or "", time.time()))
+            self.db.commit()
+            return cur.lastrowid
+
+    def due_reminders(self, now=None, limit=20):
+        now = float(now or time.time())
+        with self._lock:
+            return self.db.execute(
+                "SELECT * FROM reminders WHERE enabled=1 AND due_at<=? ORDER BY due_at LIMIT ?",
+                (now, int(limit))).fetchall()
+
+    def list_reminders(self, chat_id, limit=20):
+        with self._lock:
+            return self.db.execute(
+                "SELECT * FROM reminders WHERE chat_id=? AND enabled=1 ORDER BY due_at LIMIT ?",
+                (chat_id, int(limit))).fetchall()
+
+    def fire_reminder(self, rid, next_due=0):
+        with self._lock:
+            if next_due:
+                self.db.execute("UPDATE reminders SET due_at=?, fired_at=? WHERE id=?",
+                                (float(next_due), time.time(), int(rid)))
+            else:
+                self.db.execute("UPDATE reminders SET enabled=0, fired_at=? WHERE id=?",
+                                (time.time(), int(rid)))
+            self.db.commit()
+
+    def delete_reminder(self, rid, chat_id=""):
+        with self._lock:
+            if chat_id:
+                cur = self.db.execute("UPDATE reminders SET enabled=0 WHERE id=? AND chat_id=?",
+                                      (int(rid), chat_id))
+            else:
+                cur = self.db.execute("UPDATE reminders SET enabled=0 WHERE id=?", (int(rid),))
+            self.db.commit()
+            return cur.rowcount > 0
 
     def close(self):
         with self._lock:
