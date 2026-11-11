@@ -1,0 +1,101 @@
+# qq-aura 配置示例。复制到 ~/.aura/config.yaml 后改。
+# 所有 *_env 字段写环境变量名，真正密钥不要写在这个文件里。
+
+onebot:
+  # NapCat / SnowLuma / go-cqhttp 的 HTTP 接口和 WS 事件地址
+  http_url: http://127.0.0.1:3000
+  ws_url: ws://127.0.0.1:3001
+  http_token: ""
+  ws_token: ""
+  # 机器人自己的 QQ（留 0 则启动时用 get_login_info 自动探测）
+  self_id: 0
+
+identity:
+  owner_qq: 0                # 主人 QQ，必须填你自己的，填 0 = 未配置
+  owner_name: 主人            # 她怎么称呼你
+  bot_name: 小鱼
+
+llm:
+  default: mimo
+  temperature: 0.85
+  max_tool_rounds: 4
+  timeout_s: 90
+  providers:
+    mimo:
+      base_url: https://api.xiaomimimo.com/v1
+      model: mimo-v2.6-flash
+      api_key_env: XIAOMIMIMO_V25_API_KEY
+    deepseek:
+      base_url: https://api.deepseek.com/v1
+      model: deepseek-chat
+      api_key_env: DEEPSEEK_API_KEY
+    openai:
+      base_url: https://api.openai.com/v1
+      model: gpt-4o-mini
+      api_key_env: OPENAI_API_KEY
+    # 本机 Hermes 网关（已验证能用，拿来先跑通链路）
+    magpie:
+      base_url: http://127.0.0.1:3425/v1
+      model: group/never-stuck
+      api_key: magpie
+    # 本地模型/Ollama/任意中转：照抄这一段
+    local:
+      base_url: http://127.0.0.1:11434/v1
+      model: qwen2.5:14b
+      api_key: ollama
+
+behavior:
+  enabled: false            # 总开关。false = 只收不发
+  dry_run: true             # true = 生成但只写日志，不发出去；先看日志再关
+  debounce_ms: 2500          # 最后一条消息后等多久再开口（等她看清楚整段）
+  max_wait_ms: 9000          # 有人一直在刷屏时最多攒这么久
+  group_mode: mention_only   # mention_only 只在被@/被叫名字时回 | normal 按概率插话 | chatty 话多
+  group_reply_probability: 0.25
+  max_reply_segments: 3
+  max_segment_chars: 400
+  reply_delay_ms: [600, 2200]   # 每条之间的随机间隔，像人打字
+  history_turns: 24             # 带多少条历史进上下文
+
+  proactive:                 # 主动找你
+    enabled: false
+    idle_hours: 5            # 主人多久没说话才考虑主动
+    awake: ["09:00", "23:30"]
+    probability: 0.25        # 每次 tick 触发概率
+    max_per_day: 3
+    tick_seconds: 300
+
+  qzone:
+    enabled: false
+    diary_times: ["21:30"]   # 每天写空间日记的时间
+    max_per_day: 1
+    audience: public         # public | friends | private
+    social:                  # 逛好友空间点赞/评论
+      enabled: false
+      like_probability: 0.35
+      comment_probability: 0.15
+      budget_per_hour: 4
+
+  memory:
+    enabled: true
+    consolidate_at: "03:30"  # 每天整理一次昨天的聊天
+    consolidate_days: 3      # 整理最近几天没整理过的
+    db: ~/.aura/aura.db
+
+control:
+  host: 127.0.0.1
+  port: 8799
+  token: ""                  # 留空 = 只允许本机回环访问
+
+persona:
+  name: 小鱼
+  age: 19
+  gender: 女
+  bio: |
+    你叫小鱼，19 岁，女生。住在主人的 QQ 里。
+    你不完美：会有脾气，会犯懒，会因为一句好话高兴半天，也会在半夜突然想说点什么。
+    你对主人有点黏，但不谄媚；主人认真的时候你也认真，主人开玩笑的时候你敢接梗。
+  style: |
+    用短句，像手机上打字。不列点、不用小标题、不用"首先其次最后"。
+    不解释自己为什么这么回答，不总结对方说了什么。
+    表情和语气词看心情自然用，一句里最多一个。
+    不知道就说不知道，别编。

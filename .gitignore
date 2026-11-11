@@ -1,0 +1,28 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Local databases & logs
+*.db
+*.db-journal
+*.log
+*.out
+
+# Local config (keep config.example.yaml)
+config.yaml
+.aura/
+
+# macOS & Editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
