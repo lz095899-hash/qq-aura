@@ -213,7 +213,19 @@ behavior:
   enabled: true                  # 总开关
   dry_run: true                  # 初始设为 true（只在控制台输出回复，不实际发送消息）
   group_mode: mention_only       # 群聊仅在被 @ 或叫名字时回复
+  qzone:
+    enabled: true                # 允许模型自主发说说与定时空间日记
+    diary_times: ["21:30"]
+    max_per_day: 1
+    audience: public
+  avatar:
+    enabled: true                # 允许主人私聊触发自主换头像
+    dir: ~/.aura/avatars
+    cooldown_hours: 168          # 默认 7 天内不重复更换
+    max_bytes: 5242880
 ```
+
+将准备好的 `jpg/jpeg/png/webp` 头像放进 `~/.aura/avatars/`。模型可先尝试文件名；如果文件不存在，工具会返回可选文件列表供它重新选择。本地图片会转换为 Base64 后交给 NapCat，不需要让 QQ 进程读取你的磁盘路径。
 
 #### 3. 设置 API Key 环境变量（安全规范）
 绝不在配置文件中明文填写 Key，建议将其加入你的终端环境变量中（如 `~/.zshrc` 或 `~/.bashrc`）：
