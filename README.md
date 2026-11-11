@@ -112,8 +112,9 @@
 | **QQ 空间** | 发表说说 | ✅ | 扩展 action `send_qzone_msg`，权限（公开=1/好友=4/私密=64）可控 |
 | | 空间日记 | ✅ | 定时按今日经历自动创作日记并发布 |
 | | 好友空间巡视点赞 | ✅ | 获取好友动态流水，按预算概率自动点赞、评论互动 |
+| **账号形象** | 自主更换头像 | ✅ | 主人私聊可触发；支持 HTTPS 或本地图库，默认 7 天冷却 |
 | **多模型支持** | 小米 MiMo / DeepSeek / OpenAI / Ollama | ✅ | 标准 OpenAI 兼容接口封装，支持运行时动态热切换 |
-| **客户端集成** | MCP 通用协议接入 | ✅ | FastMCP 提供 14 个控制工具，开箱即用 |
+| **客户端集成** | MCP 通用协议接入 | ✅ | FastMCP 提供 15 个控制工具，开箱即用 |
 
 ---
 
@@ -312,6 +313,7 @@ mcp_servers:
 | `aura_start` | 无 | 后台拉起常驻守护进程（如果未启动） |
 | `aura_send` | `chat_id`, `text`, `at` | 主动以小号身份发送消息（支持私聊 `private:xxx` 或群聊 `group:xxx`） |
 | `aura_qzone_post` | `text`, `visibility` | 发布 QQ 空间说说（支持 `public` / `friends` / `self`） |
+| `aura_avatar` | `source`, `force` | 更换 QQ 头像；支持 HTTPS URL 或 `~/.aura/avatars` 内文件名 |
 | `aura_diary` | `force` | 汇总今日对话流水并创作发布一篇空间日记 |
 | `aura_proactive` | `force` | 触发一次主动搭话检查 |
 | `aura_remember` | `text`, `about`, `importance` | 手动写入一条长期事实记忆 |
@@ -365,7 +367,7 @@ mcp_servers:
 本项目自带高覆盖率的端到端自动化测试套件（使用内置假网关与 Mock 服务，**无需真实 QQ 账号即可测试全部功能**）：
 
 ```bash
-# 运行 29 项端到端综合测试（涵盖收发、防抖、群聊门禁、记忆隔离、空间与控制指令）
+# 运行 32 项端到端综合测试（涵盖收发、防抖、群聊门禁、记忆隔离、空间、头像与控制指令）
 python tests/e2e.py
 ```
 

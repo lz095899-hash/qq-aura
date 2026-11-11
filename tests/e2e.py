@@ -95,6 +95,8 @@ async def main():
             "proactive": {"enabled": False}, "memory": {"enabled": True, "db": str(tmp / "a.db")},
             "qzone": {"enabled": True, "audience": "public", "diary_times": ["21:30"],
                       "social": {"enabled": False}},
+            "avatar": {"enabled": True, "dir": str(tmp / "avatars"), "cooldown_hours": 168,
+                       "max_bytes": 5242880},
         },
         "control": {"host": "127.0.0.1", "port": free_port(), "token": ""},
         "persona": {"name": "小鱼", "age": 19, "gender": "女",
@@ -104,6 +106,9 @@ async def main():
     cfg_path = tmp / "config.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg_raw, allow_unicode=True), encoding="utf-8")
     cfg = load_config(cfg_path)
+    avatar_dir = tmp / "avatars"
+    avatar_dir.mkdir()
+    (avatar_dir / "happy.png").write_bytes(b"fake-png-for-onebot-test")
 
     print("连接假网关…")
     engine = build(cfg)
@@ -160,8 +165,18 @@ async def main():
     check("ugc_right 用的是公开=1", bool(qz) and qz[-1]["params"]["ugc_right"] == 1)
     check("内容对得上", bool(qz) and qz[-1]["params"]["content"] == "今天风很大")
 
-    # 7. 空间日记
-    print("\n[7] 空间日记")
+    # 7. 换头像
+    print("\n[7] 更换 QQ 头像")
+    r = await engine.change_avatar("happy.png")
+    avatars = [c for c in gw.calls if c["action"] == "set_qq_avatar"]
+    check("调用了 set_qq_avatar", r.get("ok") and bool(avatars), r)
+    check("本地头像转为 base64 传输", bool(avatars) and
+          avatars[-1]["params"].get("file", "").startswith("base64://"))
+    r2 = await engine.change_avatar("happy.png")
+    check("冷却期阻止频繁换头像", not r2.get("ok") and "冷却" in r2.get("message", ""), r2)
+
+    # 8. 空间日记
+    print("\n[8] 空间日记")
     r = await engine.write_diary()
     check("日记发出去了", r.get("ok"), r)
     check("日记落库", engine.store.qzone_today_count() >= 2)

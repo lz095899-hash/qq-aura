@@ -46,6 +46,8 @@ class MockGateway:
             data = {"message_id": self._n}
         elif action == "send_qzone_msg":
             data = {"tid": "TID123"}
+        elif action == "set_qq_avatar":
+            data = {"result": "ok"}
         elif action == "get_qzone_feeds":
             data = {"feeds": [{"key": "F1", "uin": 10002, "html": "<p>今天加班到十点</p>"},
                               {"key": "F2", "uin": 10003, "html": "<p>新买的猫窝到了</p>"}]}

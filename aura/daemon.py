@@ -83,6 +83,11 @@ def make_app(cfg, engine):
         return web.json_response(await engine.post_qzone(str(b.get("text") or ""),
                                                          str(b.get("visibility") or "")))
 
+    async def avatar(request):
+        b = await request.json()
+        return web.json_response(await engine.change_avatar(
+            str(b.get("source") or ""), force=bool(b.get("force"))))
+
     async def diary(request):
         return web.json_response(await engine.write_diary())
 
@@ -194,7 +199,8 @@ def make_app(cfg, engine):
 
     app.add_routes([
         web.get("/status", status), web.get("/health", health),
-        web.post("/send", send), web.post("/qzone", qzone), web.post("/diary", diary),
+        web.post("/send", send), web.post("/qzone", qzone), web.post("/avatar", avatar),
+        web.post("/diary", diary),
         web.post("/proactive", proactive), web.post("/remember", remember),
         web.get("/recall", recall), web.get("/history", history),
         web.post("/toggle", toggle), web.post("/model", model),

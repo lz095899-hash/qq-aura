@@ -135,6 +135,12 @@ async def aura_qzone_post(text: str, visibility: str = "") -> str:
 
 
 @mcp.tool()
+async def aura_avatar(source: str, force: bool = False) -> str:
+    """更换她的 QQ 头像。source 填 ~/.aura/avatars 内文件名或 HTTPS 图片 URL；force 可跳过冷却。"""
+    return await _safe(_req, "POST", "/avatar", {"source": source, "force": force}, timeout=90)
+
+
+@mcp.tool()
 async def aura_diary() -> str:
     """让她按今天的聊天流水写一篇空间日记并发出去。"""
     return await _safe(_req, "POST", "/diary", {}, timeout=180)

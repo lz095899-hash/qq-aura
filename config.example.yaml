@@ -75,6 +75,12 @@ behavior:
       comment_probability: 0.15
       budget_per_hour: 4
 
+  avatar:
+    enabled: false           # 开启后，她可在主人私聊中主动调用换头像工具
+    dir: ~/.aura/avatars     # 本地头像图库；模型只需传文件名
+    cooldown_hours: 168      # 自主更换冷却，默认 7 天
+    max_bytes: 5242880       # 单张最多 5 MiB
+
   memory:
     enabled: true
     consolidate_at: "03:30"  # 每天整理一次昨天的聊天

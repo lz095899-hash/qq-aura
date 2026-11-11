@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import random
 import time
+from pathlib import Path
 
 from . import tools as tools_mod
 from .onebot import OneBotError, mentions_me, text_of
@@ -325,6 +327,57 @@ class Engine:
         tid = str((r or {}).get("tid") or (r or {}).get("id") or r or "")
         self.store.add_qzone(tid, text)
         return {"ok": True, "message": f"说说发出去了（tid {tid or '?'}）", "tid": tid}
+
+    async def change_avatar(self, source, force=False, ctx=None):
+        """更换 QQ 头像。source 可为 HTTPS URL，或 avatar_dir 内的文件名。"""
+        cfg = self.cfg()["behavior"].get("avatar") or {}
+        if not cfg.get("enabled"):
+            return {"ok": False, "message": "换头像功能没开（behavior.avatar.enabled）"}
+        source = str(source or "").strip()
+        if not source:
+            return {"ok": False, "message": "缺少头像图片"}
+
+        cooldown_h = max(0.0, float(cfg.get("cooldown_hours", 168)))
+        last = float(self.store.get("avatar_last_changed", 0) or 0)
+        remaining = cooldown_h * 3600 - (time.time() - last)
+        if remaining > 0 and not force:
+            return {"ok": False, "message": f"头像冷却中，还要 {remaining / 3600:.1f} 小时"}
+
+        if source.startswith("https://"):
+            payload = source
+            shown = source
+        elif source.startswith("http://"):
+            return {"ok": False, "message": "远程头像只允许 HTTPS URL"}
+        else:
+            avatar_dir = Path(str(cfg.get("dir") or "~/.aura/avatars")).expanduser().resolve()
+            candidate = Path(source).expanduser()
+            path = candidate.resolve() if candidate.is_absolute() else (avatar_dir / candidate).resolve()
+            try:
+                path.relative_to(avatar_dir)
+            except ValueError:
+                return {"ok": False, "message": "本地头像必须位于配置的 avatar.dir 目录内"}
+            if not path.is_file():
+                choices = sorted(p.name for p in avatar_dir.glob("*") if p.suffix.lower() in
+                                 {".jpg", ".jpeg", ".png", ".webp"}) if avatar_dir.exists() else []
+                return {"ok": False, "message": "头像文件不存在", "available": choices[:30]}
+            if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+                return {"ok": False, "message": "头像只支持 jpg/jpeg/png/webp"}
+            if path.stat().st_size > int(cfg.get("max_bytes", 5 * 1024 * 1024)):
+                return {"ok": False, "message": "头像文件过大"}
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            payload = f"base64://{encoded}"
+            shown = path.name
+
+        if self._dry():
+            log.info("[dry_run] 本来要换头像：%s", shown)
+            return {"ok": True, "message": "试运行，没真换", "dry_run": True}
+        try:
+            await self.onebot.call("set_qq_avatar", {"file": payload}, timeout=60)
+        except OneBotError as e:
+            return {"ok": False, "message": str(e)}
+        self.store.set("avatar_last_changed", time.time())
+        self.store.set("avatar_current", shown)
+        return {"ok": True, "message": f"头像已更换：{shown}", "source": shown}
 
     async def write_diary(self, ctx=None):
         key = f"private:{self.owner_qq}"

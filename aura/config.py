@@ -25,6 +25,8 @@ DEFAULTS = {
         "qzone": {"enabled": False, "diary_times": ["21:30"], "max_per_day": 1, "audience": "public",
                   "social": {"enabled": False, "like_probability": 0.35,
                              "comment_probability": 0.15, "budget_per_hour": 4}},
+        "avatar": {"enabled": False, "dir": "~/.aura/avatars", "cooldown_hours": 168,
+                   "max_bytes": 5242880},
         "memory": {"enabled": True, "consolidate_at": "03:30", "consolidate_days": 3,
                    "db": "~/.aura/aura.db"},
     },

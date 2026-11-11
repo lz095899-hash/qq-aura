@@ -62,6 +62,13 @@ _QZONE = _tool(
                     "description": "可见范围，默认按配置"}},
     ["text"])
 
+_AVATAR = _tool(
+    "change_avatar",
+    "更换自己的 QQ 头像。只有你真的想换、或主人明确让你换时使用；不要频繁更换。"
+    "source 填头像目录里的文件名，或可信的 HTTPS 图片 URL。",
+    {"source": {"type": "string", "description": "本地头像文件名或 HTTPS 图片 URL"}},
+    ["source"])
+
 _DIARY = _tool(
     "write_diary",
     "按今天的聊天流水写一篇空间日记并发布。主人让你写日记时用。",
@@ -79,7 +86,7 @@ def build(ctx):
     if ctx.get("is_owner") or ctx.get("kind") == "group":
         tools.append(_REMEMBER)
     if ctx.get("is_owner"):
-        tools.extend([_QZONE, _DIARY, _POKE])
+        tools.extend([_QZONE, _AVATAR, _DIARY, _POKE])
     return tools
 
 
@@ -127,6 +134,9 @@ async def dispatch(engine, name, args, ctx):
     if name == "post_qzone":
         return await engine.post_qzone(str(args.get("text") or ""),
                                        str(args.get("visibility") or ""), ctx=ctx)
+
+    if name == "change_avatar":
+        return await engine.change_avatar(str(args.get("source") or ""), ctx=ctx)
 
     if name == "write_diary":
         return await engine.write_diary(ctx=ctx)
